@@ -9,8 +9,8 @@ use smt::poseidon::{Poseidon, SmtP128Pow5T3};
 use std::marker::PhantomData;
 
 fn main() {
-    const HEIGHT: usize = 20; // number of layers in tree
-    let k = 9; //number of rows in circuit is 2^k
+    const HEIGHT: usize = 24; // number of layers in tree
+    let k = 10; // number of rows in circuit is 2^k
     let poseidon_2 = Poseidon::<Fp, 2>::new(); // poseidon hashfn with 2 inputs
 
     // private values
@@ -57,12 +57,13 @@ fn main() {
         external_nullifier,
         _spec: PhantomData,
     };
-    circuit.plot();
+    circuit.plot(k);
 
     // specify the public inputs
     let public_inputs = vec![signal_hash, external_nullifier, nullifier_hash, root];
 
     // proove
+    println!("k:{}", k);
     MockProver::run(k, &circuit, vec![public_inputs])
         .unwrap()
         .assert_satisfied();

@@ -73,7 +73,7 @@ impl<
         layouter.constrain_instance(var, column, row)
     }
 
-    pub fn plot(&self) {
+    pub fn plot(&self, k: u32) {
         let drawing_area = BitMapBackend::new("example-circuit-layout.png", (1024 * 2, 768 * 2))
             .into_drawing_area();
         drawing_area.fill(&WHITE).unwrap();
@@ -82,7 +82,7 @@ impl<
             .unwrap();
 
         let circuit = self.without_witnesses();
-        let k = 8; // Suitable size for MyCircuit
+        //let k = 8; // Suitable size for MyCircuit
         CircuitLayout::default()
             .render(k, &circuit, &drawing_area)
             .unwrap();
