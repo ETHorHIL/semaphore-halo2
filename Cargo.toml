@@ -6,7 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-halo2_proofs = { git = "https://github.com/young-rocks/halo2", rev = "445a4e275d7f3088d48d1eb27ba177644b9aa550" }
+halo2_proofs = { git = "https://github.com/young-rocks/halo2", rev = "445a4e275d7f3088d48d1eb27ba177644b9aa550", features = ["dev-graph"] }
 halo2_gadgets = { git = "https://github.com/young-rocks/halo2", rev = "445a4e275d7f3088d48d1eb27ba177644b9aa550" }
 smt = { git = "https://github.com/young-rocks/rocks-smt"}
 chiplet = { git = "https://github.com/young-rocks/rocks-smt"}
+plotters = "0.3.0"

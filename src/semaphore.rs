@@ -5,16 +5,19 @@ use halo2_gadgets::poseidon::primitives::Spec;
 use halo2_proofs::plonk::Instance;
 use halo2_proofs::{
     arithmetic::FieldExt,
-    circuit::{Cell, Layouter, SimpleFloorPlanner, Value},
+    circuit::{floor_planner::V1, Cell, Layouter, Value},
     plonk::{Advice, Circuit, Column, ConstraintSystem, Error},
 };
 
 use crate::mul::NumericOperation;
 use crate::mul::{FieldChip, FieldConfig};
+use halo2_proofs::dev::CircuitLayout;
 use smt::poseidon::FieldHasher;
 use smt::smt::Path;
 use std::clone::Clone;
 use std::marker::PhantomData;
+
+use plotters::prelude::*;
 
 #[derive(Clone)]
 pub struct SemaphoreConfig<
@@ -27,7 +30,7 @@ pub struct SemaphoreConfig<
 > {
     path_config: PathConfig<F, S, WIDTH, RATE, N>,
     poseidon_config_2: PoseidonConfig<F, WIDTH, RATE>,
-    advices: [Column<Advice>; 9],
+    advices: [Column<Advice>; 2],
     assert_equal_config: AssertEqualConfig<F>,
     field_chip: FieldConfig,
     public_inputs: Column<Instance>,
@@ -48,7 +51,6 @@ pub struct SemaphoreCircuit<
     pub identity_trapdoor: F,
     pub signal_hash: F,
     pub external_nullifier: F,
-    pub nullifier_hash: F,
     pub _spec: PhantomData<S>,
 }
 
@@ -70,6 +72,21 @@ impl<
     ) -> Result<(), Error> {
         layouter.constrain_instance(var, column, row)
     }
+
+    pub fn plot(&self) {
+        let drawing_area = BitMapBackend::new("example-circuit-layout.png", (1024 * 2, 768 * 2))
+            .into_drawing_area();
+        drawing_area.fill(&WHITE).unwrap();
+        let drawing_area = drawing_area
+            .titled("Example Circuit Layout", ("sans-serif", 60))
+            .unwrap();
+
+        let circuit = self.without_witnesses();
+        let k = 8; // Suitable size for MyCircuit
+        CircuitLayout::default()
+            .render(k, &circuit, &drawing_area)
+            .unwrap();
+    }
 }
 impl<
         F: FieldExt,
@@ -81,7 +98,7 @@ impl<
     > Circuit<F> for SemaphoreCircuit<F, S, H, WIDTH, RATE, N>
 {
     type Config = SemaphoreConfig<F, S, H, WIDTH, RATE, N>;
-    type FloorPlanner = SimpleFloorPlanner;
+    type FloorPlanner = V1;
 
     fn without_witnesses(&self) -> Self {
         Self {
@@ -94,13 +111,12 @@ impl<
             identity_trapdoor: F::zero(),
             signal_hash: F::zero(),
             external_nullifier: F::zero(),
-            nullifier_hash: F::zero(),
             _spec: PhantomData,
         }
     }
 
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
-        let advices = [(); 9].map(|_| meta.advice_column());
+        let advices = [(); 2].map(|_| meta.advice_column());
         advices
             .iter()
             .for_each(|column| meta.enable_equality(*column));
@@ -113,7 +129,7 @@ impl<
             poseidon_config_2: PoseidonChip::<F, S, WIDTH, RATE, 2>::configure(meta),
             advices,
             assert_equal_config: AssertEqualChip::configure(meta, [advices[0], advices[1]]),
-            field_chip: FieldChip::configure(meta, [advices[2], advices[3]]),
+            field_chip: FieldChip::configure(meta, [advices[0], advices[1]]),
             public_inputs,
             _hasher: PhantomData,
         }
@@ -131,10 +147,12 @@ impl<
             signal_hash_cell,
             external_nullifier_cell,
             root_cell,
-            nullifier_hash_cell,
         ) = layouter.assign_region(
             || "semaphore circuit",
             |mut region| {
+                // we have two advice colums, setting the first three inputs in col 0 and next in col 1
+                // the reason we have two instead of one advice column is the fieldchip and assert_equal chip which require two
+                // otherwise we would have put the values below in one because the number of rows is for sure sufficient
                 let identity_nullifier = region.assign_advice(
                     || "identity_nullifier",
                     config.advices[0],
@@ -144,44 +162,37 @@ impl<
 
                 let identity_trapdoor = region.assign_advice(
                     || "identity_trapdoor",
-                    config.advices[1],
-                    0,
+                    config.advices[0],
+                    1,
                     || Value::known(self.identity_trapdoor),
                 )?;
 
                 let one = region.assign_advice(
                     || "one",
-                    config.advices[2],
-                    0,
+                    config.advices[0],
+                    2,
                     || Value::known(F::one()),
                 )?;
 
                 let signal_hash = region.assign_advice(
                     || "signal_hash",
-                    config.advices[3],
+                    config.advices[1],
                     0,
                     || Value::known(self.signal_hash),
                 )?;
 
                 let external_nullifier = region.assign_advice(
                     || "external_nullifier",
-                    config.advices[4],
-                    0,
+                    config.advices[1],
+                    1,
                     || Value::known(self.external_nullifier),
                 )?;
 
                 let root = region.assign_advice(
                     || "root",
-                    config.advices[5],
-                    0,
+                    config.advices[1],
+                    2,
                     || Value::known(self.root),
-                )?;
-
-                let nullifier_hash = region.assign_advice(
-                    || "nullifier_hash",
-                    config.advices[6],
-                    0,
-                    || Value::known(self.nullifier_hash),
                 )?;
 
                 Ok((
@@ -191,10 +202,46 @@ impl<
                     signal_hash,
                     external_nullifier,
                     root,
-                    nullifier_hash,
                 ))
             },
         )?;
+
+        let poseidon_chip_2 =
+            PoseidonChip::<F, S, WIDTH, RATE, 2>::construct(config.poseidon_config_2);
+
+        let secret_circuit = poseidon_chip_2.hash(
+            &mut layouter,
+            &[identity_nullifier_cell.clone(), identity_trapdoor_cell],
+        )?;
+
+        let leaf_circuit =
+            poseidon_chip_2.hash(&mut layouter, &[secret_circuit.clone(), secret_circuit])?;
+
+        let nullifier_hash_circuit = poseidon_chip_2.hash(
+            &mut layouter,
+            &[external_nullifier_cell.clone(), identity_nullifier_cell],
+        )?;
+
+        let path_chip = PathChip::<F, S, H, WIDTH, RATE, N>::from_native(
+            config.path_config,
+            &mut layouter,
+            self.path.clone(),
+        )?;
+
+        let membership_cell =
+            path_chip.check_membership(&mut layouter, root_cell.clone(), leaf_circuit)?;
+
+        // in the PSE circom version they dod this to "prevent tempering withth"
+        let mul_chip = FieldChip::<F>::construct(config.field_chip);
+        mul_chip.mul(
+            &mut layouter,
+            signal_hash_cell.clone(),
+            signal_hash_cell.clone(),
+        )?;
+
+        let assert_equal_chip = AssertEqualChip::construct(config.assert_equal_config, ());
+
+        assert_equal_chip.assert_equal(&mut layouter, membership_cell, one_cell)?;
 
         self.expose_public(
             layouter.namespace(|| "constrain signal_hash"),
@@ -213,7 +260,7 @@ impl<
         self.expose_public(
             layouter.namespace(|| "constrain nullifier_hash"),
             config.public_inputs,
-            nullifier_hash_cell.cell(),
+            nullifier_hash_circuit.cell(),
             2,
         )?;
 
@@ -223,44 +270,6 @@ impl<
             root_cell.cell(),
             3,
         )?;
-
-        let poseidon_chip_2 =
-            PoseidonChip::<F, S, WIDTH, RATE, 2>::construct(config.poseidon_config_2);
-
-        let secret_circuit = poseidon_chip_2.hash(
-            &mut layouter,
-            &[identity_nullifier_cell.clone(), identity_trapdoor_cell],
-        )?;
-
-        let leaf_circuit =
-            poseidon_chip_2.hash(&mut layouter, &[secret_circuit.clone(), secret_circuit])?;
-
-        let nullifier_hash_circuit = poseidon_chip_2.hash(
-            &mut layouter,
-            &[external_nullifier_cell, identity_nullifier_cell],
-        )?;
-
-        let path_chip = PathChip::<F, S, H, WIDTH, RATE, N>::from_native(
-            config.path_config,
-            &mut layouter,
-            self.path.clone(),
-        )?;
-
-        let membership_cell = path_chip.check_membership(&mut layouter, root_cell, leaf_circuit)?;
-
-        // in the PSE circom version they do this to "prevent tempering with the signal hash"
-        let mul_chip = FieldChip::<F>::construct(config.field_chip);
-        mul_chip.mul(&mut layouter, signal_hash_cell.clone(), signal_hash_cell)?;
-
-        let assert_equal_chip = AssertEqualChip::construct(config.assert_equal_config, ());
-
-        assert_equal_chip.assert_equal(
-            &mut layouter,
-            nullifier_hash_cell,
-            nullifier_hash_circuit,
-        )?;
-
-        assert_equal_chip.assert_equal(&mut layouter, membership_cell, one_cell)?;
 
         Ok(())
     }
