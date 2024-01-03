@@ -4,7 +4,7 @@ This repository contains an educational implementation of [Semaphore circuits](h
 
 ## Disclaimer
 
-This implementation is for educational purposes and likely contains bugs. It is not recommended for production use. For a higher quality Semaphore implementation in Halo2, see [Andrija Novakovic's work](https://github.com/akinovak/halo2-semaphore/tree/main).
+This implementation is for educational purposes and contains bugs. For a higher quality Semaphore implementation in Halo2, see [Andrija Novakovic's work](https://github.com/akinovak/halo2-semaphore/tree/main).
 
 ## Features
 
